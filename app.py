@@ -7,7 +7,8 @@ import base64
 import qrcode
 import re
 import io
-import zipfile # Adicionado para compactação
+import zipfile
+import os # Adicionado para interagir com o sistema de ficheiros
 
 # ==============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -15,7 +16,7 @@ import zipfile # Adicionado para compactação
 st.set_page_config(page_title="Gerador de Comandas")
 
 # ==============================
-# FUNÇÕES AUXILIARES (DO CÓDIGO COLAB ORIGINAL)
+# FUNÇÕES AUXILIARES
 # ==============================
 
 # ESTA É A FUNÇÃO EXATA DO SEU SCRIPT COLAB FUNCIONAL
@@ -51,12 +52,46 @@ def gerar_qrcode(numero, dado_base, tamanho, rotacao_qr):
         img_qr = img_qr.rotate(rotacao_qr, expand=True)
     return img_qr
 
-def carregar_fonte(fonte_bytes, tamanho):
-    """Carrega a fonte a partir do ficheiro .ttf enviado pelo utilizador."""
+# ==================================================================
+# ALTERAÇÃO: Nova função para ler as fontes da pasta 'fonts'
+# ==================================================================
+@st.cache_data # Usar cache para não ler os ficheiros repetidamente
+def carregar_fontes_disponiveis(pasta_fontes="fonts"):
+    """
+    Verifica uma pasta, lê os ficheiros .ttf e retorna um dicionário
+    mapeando o nome real da fonte para o seu caminho.
+    """
+    fontes = {}
+    if not os.path.isdir(pasta_fontes):
+        return fontes # Retorna dicionário vazio se a pasta não existir
+
+    for nome_ficheiro in os.listdir(pasta_fontes):
+        if nome_ficheiro.lower().endswith('.ttf'):
+            caminho_completo = os.path.join(pasta_fontes, nome_ficheiro)
+            try:
+                # Abre o ficheiro de fonte para extrair o seu nome real
+                font = ImageFont.truetype(caminho_completo, size=10)
+                # O nome geralmente é uma tupla (Nome da Família, Estilo)
+                nome_real = " ".join(font.getname())
+                fontes[nome_real] = caminho_completo
+            except Exception:
+                # Se não conseguir ler o nome, usa o nome do ficheiro como fallback
+                nome_fallback = os.path.splitext(nome_ficheiro)[0]
+                fontes[nome_fallback] = caminho_completo
+    return fontes
+# ==================================================================
+# FIM DA ALTERAÇÃO
+# ==================================================================
+
+def carregar_fonte(caminho_fonte, tamanho):
+    """Carrega a fonte a partir de um caminho de ficheiro local."""
     try:
-        return ImageFont.truetype(io.BytesIO(fonte_bytes.getvalue()), tamanho)
+        return ImageFont.truetype(caminho_fonte, tamanho)
+    except FileNotFoundError:
+        st.error(f"Erro: O ficheiro da fonte '{caminho_fonte}' não foi encontrado. Verifique se a pasta 'fonts' e os ficheiros .ttf estão no seu repositório.")
+        return None
     except Exception as e:
-        st.error(f"Ocorreu um erro ao ler o ficheiro de fonte: {e}")
+        st.error(f"Ocorreu um erro ao carregar a fonte: {e}")
         return None
 
 def gerar_imagem_comanda(background, numero, dado_base, config):
@@ -69,7 +104,7 @@ def gerar_imagem_comanda(background, numero, dado_base, config):
     pos_qr = (config['qr_x'] - qr_w // 2, config['qr_y'] - qr_h // 2)
     imagem_final.paste(img_qr, pos_qr, img_qr)
 
-    fonte = carregar_fonte(config['fonte_arquivo'], config['tamanho_texto'])
+    fonte = carregar_fonte(config['caminho_fonte'], config['tamanho_texto'])
     if fonte is None:
         return None
         
@@ -107,16 +142,24 @@ if 'imagens_geradas' not in st.session_state:
 st.title("📄 Gerador de Comandas com QR Code")
 st.markdown("Configure as opções na barra lateral e clique em 'Gerar Prévias' para visualizar.")
 
+# Carrega as fontes da pasta 'fonts'
+fontes_disponiveis = carregar_fontes_disponiveis()
+
 with st.sidebar:
     st.header("⚙️ Configurações")
 
-    st.subheader("1. Ficheiros Obrigatórios")
+    st.subheader("1. Ficheiros e Fonte")
     imagem_base_up = st.file_uploader(
-        "1. Template Vazio da Comanda (sem QR Code ou número)", 
+        "1. Template Vazio da Comanda", 
         type=["png", "jpg", "jpeg"]
     )
-    fonte_up = st.file_uploader("2. Ficheiro de Fonte (.ttf)", type=["ttf"])
-    st.info("Não tem um ficheiro de fonte? Baixe um gratuitamente no [Google Fonts](https://fonts.google.com/). Recomendo a 'Roboto' ou 'Montserrat'.")
+    
+    # ALTERAÇÃO: O menu de seleção agora é preenchido dinamicamente
+    if fontes_disponiveis:
+        fonte_selecionada = st.selectbox("2. Escolha a Fonte para os Números", options=sorted(fontes_disponiveis.keys()))
+    else:
+        st.error("A pasta 'fonts' não foi encontrada ou está vazia. Por favor, crie a pasta e adicione ficheiros .ttf.")
+        fonte_selecionada = None # Desativa a seleção se não houver fontes
 
     st.subheader("2. Dados da Comanda")
     col1, col2 = st.columns(2)
@@ -168,8 +211,8 @@ with col_btn_1:
     if st.button("Gerar Prévias", type="primary", use_container_width=True):
         erros = []
         if not imagem_base_up: erros.append("o template vazio da comanda")
-        if not fonte_up: erros.append("o ficheiro de fonte")
         if not documento.strip(): erros.append("o documento")
+        if not fonte_selecionada: erros.append("uma fonte (verifique a pasta 'fonts')")
 
         if erros:
             msg_erro = " e ".join(filter(None, [", ".join(erros[:-1]), erros[-1]]))
@@ -187,7 +230,7 @@ with col_btn_1:
                     'tamanho_texto': tamanho_texto, 'texto_x': texto_x, 'texto_y': texto_y,
                     'cor_texto': cor_texto,
                     'rotacao_qr': rotacao_qr, 'rotacao_texto': rotacao_texto,
-                    'fonte_arquivo': fonte_up
+                    'caminho_fonte': fontes_disponiveis[fonte_selecionada]
                 }
 
                 lista_imagens = []
@@ -210,12 +253,10 @@ if st.session_state.get('imagens_geradas'):
     
     imagens_para_pdf = st.session_state['imagens_geradas']
     if imagens_para_pdf:
-        # Criar PDF em memória
         pdf_bytes = io.BytesIO()
         imagens_para_pdf[0].save(pdf_bytes, format="PDF", save_all=True, append_images=imagens_para_pdf[1:])
         pdf_bytes.seek(0)
         
-        # Botão para baixar o PDF único
         st.download_button(
             "⬇️ Baixar PDF com Todas as Comandas",
             data=pdf_bytes,
@@ -224,19 +265,13 @@ if st.session_state.get('imagens_geradas'):
             use_container_width=True
         )
 
-        # ==================================================================
-        # ALTERAÇÃO: Adicionado botão para download do arquivo ZIP
-        # ==================================================================
-        # Criar arquivo ZIP em memória
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Adicionar o PDF (já criado) ao arquivo ZIP
             pdf_filename = f"comandas_{inicio}_a_{fim}.pdf"
             zip_file.writestr(pdf_filename, pdf_bytes.getvalue())
         
         zip_buffer.seek(0)
 
-        # Botão para baixar o arquivo ZIP
         st.download_button(
             label="⬇️ Baixar PDF Compactado (.zip)",
             data=zip_buffer,
@@ -244,10 +279,7 @@ if st.session_state.get('imagens_geradas'):
             mime="application/zip",
             use_container_width=True
         )
-        # ==================================================================
-        # FIM DA ALTERAÇÃO
-        # ==================================================================
-
+        
         st.markdown("---")
 
         for i, img in enumerate(imagens_para_pdf):
@@ -256,6 +288,6 @@ if st.session_state.get('imagens_geradas'):
 
 elif imagem_base_up:
     imagem_base_up.seek(0)
-    st.image(imagem_base_up, caption="O seu template. Envie também uma fonte para continuar.", width=600)
+    st.image(imagem_base_up, caption="O seu template. Escolha uma fonte e preencha os dados para continuar.", width=600)
 else:
     st.info("A pré-visualização das suas comandas aparecerá aqui.")

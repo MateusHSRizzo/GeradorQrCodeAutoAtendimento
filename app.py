@@ -55,6 +55,75 @@ def carregar_fonte(caminho_fonte, tamanho):
         return None
 
 # ===================================================================
+# NOVA FUNÇÃO: Desenhar Réguas e Guias
+# ===================================================================
+def draw_rulers_and_guides(image, guides, ruler_size=30):
+    """
+    Desenha réguas e linhas-guia numa imagem.
+    - image: A imagem PIL base.
+    - guides: Um dicionário com as posições das guias, ex: {'X': [100, 200], 'Y': [150]}
+    - ruler_size: A espessura da régua em pixels.
+    """
+    original_width, original_height = image.size
+    new_width = original_width + ruler_size
+    new_height = original_height + ruler_size
+
+    # Cria um novo canvas com espaço para as réguas
+    ruler_canvas = Image.new('RGB', (new_width, new_height), '#f0f2f6')
+    ruler_canvas.paste(image, (ruler_size, ruler_size))
+
+    draw = ImageDraw.Draw(ruler_canvas)
+    
+    try:
+        ruler_font = ImageFont.truetype("arial.ttf", 10)
+    except IOError:
+        ruler_font = ImageFont.load_default()
+
+
+    # --- Desenhar Régua Horizontal ---
+    for x in range(0, original_width, 10):
+        pos_x = x + ruler_size
+        if x % 100 == 0:
+            draw.line([(pos_x, 0), (pos_x, ruler_size)], fill='black', width=1)
+            text = str(x)
+            text_bbox = draw.textbbox((0, 0), text, font=ruler_font)
+            text_w = text_bbox[2] - text_bbox[0]
+            draw.text((pos_x - text_w // 2, 5), text, fill='black', font=ruler_font)
+        elif x % 50 == 0:
+            draw.line([(pos_x, ruler_size // 2), (pos_x, ruler_size)], fill='gray', width=1)
+        else:
+            draw.line([(pos_x, ruler_size * 3 // 4), (pos_x, ruler_size)], fill='lightgray', width=1)
+
+    # --- Desenhar Régua Vertical ---
+    for y in range(0, original_height, 10):
+        pos_y = y + ruler_size
+        if y % 100 == 0:
+            draw.line([(0, pos_y), (ruler_size, pos_y)], fill='black', width=1)
+            text = str(y)
+            text_bbox = draw.textbbox((0, 0), text, font=ruler_font)
+            text_h = text_bbox[3] - text_bbox[1]
+            draw.text((5, pos_y - text_h // 2), text, fill='black', font=ruler_font)
+        elif y % 50 == 0:
+            draw.line([(ruler_size // 2, pos_y), (ruler_size, pos_y)], fill='gray', width=1)
+        else:
+            draw.line([(ruler_size * 3 // 4, pos_y), (ruler_size, pos_y)], fill='lightgray', width=1)
+
+    # --- Desenhar Guias ---
+    for guide_type, positions in guides.items():
+        color = positions['color']
+        # Desenha a linha-guia X (vertical)
+        if 'x' in positions:
+            guide_x = positions['x'] + ruler_size
+            draw.line([(guide_x, 0), (guide_x, new_height)], fill=color, width=1)
+        # Desenha a linha-guia Y (horizontal)
+        if 'y' in positions:
+            guide_y = positions['y'] + ruler_size
+            draw.line([(0, guide_y), (new_width, guide_y)], fill=color, width=1)
+
+    return ruler_canvas
+
+
+# ===================================================================
 # SEÇÃO 1: LÓGICA DO GERADOR DE QR CODE
 # ===================================================================
 
@@ -165,13 +234,13 @@ st.title("📄 Gerador de Comandas")
 fontes_disponiveis = carregar_fontes_disponiveis()
 
 def limpar_estado():
-    # Limpa a pré-visualização ao trocar de modo
     if 'preview_image' in st.session_state:
         del st.session_state['preview_image']
 
 modo = st.sidebar.radio("Escolha o tipo de código:", ("QR Code", "Código de Barras"), on_change=limpar_estado, key="modo_selecao")
 
 st.sidebar.header("⚙️ Configurações")
+mostrar_reguas = st.sidebar.checkbox("Mostrar Réguas e Guias", value=True)
 
 # --- Bloco do QR Code ---
 if modo == "QR Code":
@@ -218,7 +287,13 @@ if modo == "QR Code":
         config = {'tamanho_qr': tamanho_qr, 'qr_x': qr_x, 'qr_y': qr_y, 'tamanho_texto': tamanho_texto_qr, 'texto_x': texto_x_qr, 'texto_y': texto_y_qr, 'cor_texto': cor_texto_qr, 'rotacao_qr': rotacao_qr, 'rotacao_texto': rotacao_texto_qr, 'caminho_fonte': fontes_disponiveis[fonte_selecionada]}
         preview_image = gerar_imagem_qrcode(background, inicio, dado_base_para_url, config)
         if preview_image:
-            st.image(preview_image, caption=f"Exemplo da Comanda Nº {inicio}", width=600)
+            if mostrar_reguas:
+                guias = {
+                    'Codigo': {'x': qr_x, 'y': qr_y, 'color': '#ff4b4b'}, # Vermelho
+                    'Numero': {'x': texto_x_qr, 'y': texto_y_qr, 'color': '#2b83ff'} # Azul
+                }
+                preview_image = draw_rulers_and_guides(preview_image, guias)
+            st.image(preview_image, caption=f"Exemplo da Comanda Nº {inicio}", use_container_width=True)
     else:
         st.info("Preencha todos os campos obrigatórios para ver a pré-visualização.")
 
@@ -265,7 +340,7 @@ elif modo == "Código de Barras":
     col1, col2 = st.sidebar.columns(2)
     inicio = col1.number_input("Número Inicial", value=1, step=1, min_value=1, key="bc_inicio")
     fim = col2.number_input("Número Final", value=10, step=1, min_value=inicio, key="bc_fim")
-    prefixo = "/" # Prefixo oculto e fixo
+    prefixo = "/"
 
     st.sidebar.subheader("3. Layout e Posições")
     max_width, max_height = 2000, 2000
@@ -298,7 +373,13 @@ elif modo == "Código de Barras":
         config = {'prefixo': prefixo, 'largura': largura_barra, 'altura': altura_barra, 'corte_vertical': corte_vertical, 'bar_x': bar_x, 'bar_y': bar_y, 'tamanho_texto': tamanho_texto_bc, 'texto_x': texto_x_bc, 'texto_y': texto_y_bc, 'cor_texto': cor_texto_bc, 'caminho_fonte': fontes_disponiveis[fonte_selecionada], 'rotacao_barra': rotacao_barra, 'rotacao_texto': rotacao_texto_bc, 'corte_esq': corte_esq, 'corte_dir': corte_dir}
         preview_image = gerar_imagem_barcode(background, inicio, config)
         if preview_image:
-            st.image(preview_image, caption=f"Exemplo da Comanda Nº {inicio}", width=600)
+            if mostrar_reguas:
+                guias = {
+                    'Codigo': {'x': bar_x, 'y': bar_y, 'color': '#ff4b4b'}, # Vermelho
+                    'Numero': {'x': texto_x_bc, 'y': texto_y_bc, 'color': '#2b83ff'} # Azul
+                }
+                preview_image = draw_rulers_and_guides(preview_image, guias)
+            st.image(preview_image, caption=f"Exemplo da Comanda Nº {inicio}", use_container_width=True)
     else:
         st.info("Preencha todos os campos obrigatórios para ver a pré-visualização.")
     

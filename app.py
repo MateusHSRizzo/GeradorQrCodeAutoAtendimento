@@ -55,32 +55,26 @@ def carregar_fonte(caminho_fonte, tamanho):
         return None
 
 # ===================================================================
-# NOVA FUNÇÃO: Desenhar Réguas e Guias
+# FUNÇÃO: Desenhar Réguas e Guias
 # ===================================================================
 def draw_rulers_and_guides(image, guides, ruler_size=30):
     """
     Desenha réguas e linhas-guia numa imagem.
-    - image: A imagem PIL base.
-    - guides: Um dicionário com as posições das guias, ex: {'X': [100, 200], 'Y': [150]}
-    - ruler_size: A espessura da régua em pixels.
     """
     original_width, original_height = image.size
     new_width = original_width + ruler_size
     new_height = original_height + ruler_size
 
-    # Cria um novo canvas com espaço para as réguas
     ruler_canvas = Image.new('RGB', (new_width, new_height), '#f0f2f6')
     ruler_canvas.paste(image, (ruler_size, ruler_size))
 
     draw = ImageDraw.Draw(ruler_canvas)
-    
     try:
         ruler_font = ImageFont.truetype("arial.ttf", 10)
     except IOError:
         ruler_font = ImageFont.load_default()
 
-
-    # --- Desenhar Régua Horizontal ---
+    # --- Régua Horizontal ---
     for x in range(0, original_width, 10):
         pos_x = x + ruler_size
         if x % 100 == 0:
@@ -94,7 +88,7 @@ def draw_rulers_and_guides(image, guides, ruler_size=30):
         else:
             draw.line([(pos_x, ruler_size * 3 // 4), (pos_x, ruler_size)], fill='lightgray', width=1)
 
-    # --- Desenhar Régua Vertical ---
+    # --- Régua Vertical ---
     for y in range(0, original_height, 10):
         pos_y = y + ruler_size
         if y % 100 == 0:
@@ -108,14 +102,12 @@ def draw_rulers_and_guides(image, guides, ruler_size=30):
         else:
             draw.line([(ruler_size * 3 // 4, pos_y), (ruler_size, pos_y)], fill='lightgray', width=1)
 
-    # --- Desenhar Guias ---
+    # --- Guias ---
     for guide_type, positions in guides.items():
         color = positions['color']
-        # Desenha a linha-guia X (vertical)
         if 'x' in positions:
             guide_x = positions['x'] + ruler_size
             draw.line([(guide_x, 0), (guide_x, new_height)], fill=color, width=1)
-        # Desenha a linha-guia Y (horizontal)
         if 'y' in positions:
             guide_y = positions['y'] + ruler_size
             draw.line([(0, guide_y), (new_width, guide_y)], fill=color, width=1)
@@ -298,7 +290,16 @@ if modo == "QR Code":
         st.info("Preencha todos os campos obrigatórios para ver a pré-visualização.")
 
     st.markdown("---")
-    if st.button("Gerar PDF com Todas as Comandas", type="primary", use_container_width=True, key="qr_gerar_todas"):
+
+    # --- NOVO BLOCO DE AVISO E ACEITAÇÃO ---
+    st.warning("""
+    **⚠️ Atenção: Validação Obrigatória**
+
+    É de sua inteira responsabilidade testar e validar o funcionamento das comandas geradas antes de as utilizar em produção. Recomendamos que gere uma comanda de teste para garantir a compatibilidade com os seus leitores e sistemas.
+    """)
+    termos_aceites_qr = st.checkbox("Li e aceito os termos de responsabilidade.", key="qr_termos")
+    
+    if st.button("Gerar PDF com Todas as Comandas", type="primary", use_container_width=True, key="qr_gerar_todas", disabled=not termos_aceites_qr):
         erros = []
         if not imagem_base_up: erros.append("o template")
         if not documento.strip(): erros.append("o documento")
@@ -384,7 +385,16 @@ elif modo == "Código de Barras":
         st.info("Preencha todos os campos obrigatórios para ver a pré-visualização.")
     
     st.markdown("---")
-    if st.button("Gerar PDF com Todas as Comandas", type="primary", use_container_width=True, key="bc_gerar_todas"):
+
+    # --- NOVO BLOCO DE AVISO E ACEITAÇÃO ---
+    st.warning("""
+    **⚠️ Atenção: Validação Obrigatória**
+
+    É de sua inteira responsabilidade testar e validar o funcionamento das comandas geradas antes de as utilizar em produção. Recomendamos que gere uma comanda de teste para garantir a compatibilidade com os seus leitores e sistemas.
+    """)
+    termos_aceites_bc = st.checkbox("Li e aceito os termos de responsabilidade.", key="bc_termos")
+
+    if st.button("Gerar PDF com Todas as Comandas", type="primary", use_container_width=True, key="bc_gerar_todas", disabled=not termos_aceites_bc):
         erros = []
         if not imagem_base_up: erros.append("o template")
         if not fonte_selecionada: erros.append("uma fonte")
@@ -409,3 +419,4 @@ elif modo == "Código de Barras":
                     st.download_button("⬇️ Baixar .ZIP", data=zip_buffer, file_name=f"comandas_{inicio}_a_{fim}.zip", mime="application/zip", use_container_width=True)
                 else:
                     st.error("Nenhuma imagem pôde ser gerada.")
+

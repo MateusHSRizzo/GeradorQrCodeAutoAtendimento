@@ -1,4 +1,0 @@
-streamlit
-Pillow
-qrcode
-python-barcode

@@ -174,7 +174,7 @@ def gerar_imagem_qrcode(background, numero, dado_base, config):
 # ===================================================================
 
 def gerar_code39(numero, prefixo, largura, altura, corte_vertical, rotacao_barra, corte_esq, corte_dir):
-    codigo = f"{prefixo}{str(numero).zfill()}"
+    codigo = f"{prefixo}{str(numero).zfill(2)}"
     writer = ImageWriter()
     writer.set_options({'module_width': 0.7, 'module_height': altura / 10, 'quiet_zone': 2.0, 'font_size': 0, 'text_distance': 0, 'write_text': False})
     barcode_obj = Code39(codigo, writer=writer, add_checksum=False)
@@ -419,5 +419,6 @@ elif modo == "Código de Barras":
                     st.download_button("⬇️ Baixar .ZIP", data=zip_buffer, file_name=f"comandas_{inicio}_a_{fim}.zip", mime="application/zip", use_container_width=True)
                 else:
                     st.error("Nenhuma imagem pôde ser gerada.")
+
 
 

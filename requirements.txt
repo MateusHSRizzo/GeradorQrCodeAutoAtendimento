@@ -1,4 +1,22 @@
-streamlit
-Pillow
-qrcode
-python-barcode
+# Streamlit + UI
+streamlit>=1.35.0
+
+# Imagem
+Pillow>=10.0.0
+
+# QR Code
+qrcode[pil]>=7.4.2
+
+# Código de Barras
+python-barcode>=0.15.1
+
+# Validação de QR (opcional — requer libzbar-dev no Linux)
+# Ubuntu/Debian: sudo apt-get install libzbar0
+pyzbar>=0.1.9
+
+# API REST (opcional)
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+
+# E-mail
+python-dotenv>=1.0.0

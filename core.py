@@ -784,3 +784,717 @@ def draw_rulers_and_guides(
             draw.line([(0, gy), (nw, gy)], fill=color, width=1)
 
     return canvas
+
+
+# ═══════════════════════════════════════════════════════════════
+# 16. NUMERAÇÃO NÃO-SEQUENCIAL
+# ═══════════════════════════════════════════════════════════════
+
+def parsear_lista_numeros(expr: str) -> tuple[list[int], str]:
+    """
+    Converte expressão como '1,3,5,10-20,50' em lista ordenada de inteiros.
+    Retorna (lista, mensagem_de_erro).
+    """
+    numeros: set[int] = set()
+    expr = expr.strip()
+    if not expr:
+        return [], "Expressão vazia."
+    for parte in expr.split(","):
+        parte = parte.strip()
+        if not parte:
+            continue
+        if "-" in parte:
+            segmentos = parte.split("-")
+            if len(segmentos) == 2:
+                try:
+                    a, b = int(segmentos[0]), int(segmentos[1])
+                    if b < a:
+                        return [], f"Intervalo inválido: {parte}"
+                    if b - a > 10_000:
+                        return [], f"Intervalo muito grande (máx 10 000): {parte}"
+                    numeros.update(range(a, b + 1))
+                except ValueError:
+                    return [], f"Valor inválido: '{parte}'"
+            else:
+                return [], f"Intervalo malformado: '{parte}'"
+        else:
+            try:
+                numeros.add(int(parte))
+            except ValueError:
+                return [], f"Número inválido: '{parte}'"
+    return sorted(numeros), ""
+
+
+# ═══════════════════════════════════════════════════════════════
+# 17. QR CODE COM LOGO EMBUTIDO
+# ═══════════════════════════════════════════════════════════════
+
+@lru_cache(maxsize=512)
+def _gerar_qrcode_bytes_alto(
+    numero: int, dado_base: str, tamanho: int,
+    rotacao: int, fill_color: str, back_color: str,
+) -> bytes:
+    """QR Code com correção de erro nível H (necessário para logo embutido)."""
+    texto = f"{dado_base}{numero}"
+    b64   = base64.b64encode(texto.encode()).decode()
+    url   = f"https://pediucomeu.com.br/autoatendimento/{b64}"
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        box_size=10, border=2,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color=fill_color, back_color=back_color).convert("RGBA")
+    img = img.resize((tamanho, tamanho), Image.Resampling.NEAREST)
+    if rotacao:
+        img = img.rotate(rotacao, expand=True)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def gerar_qrcode_com_logo(
+    numero: int,
+    dado_base: str,
+    tamanho: int,
+    fill_color: str = "#000000",
+    back_color: str = "#FFFFFF",
+    logo: Optional[Image.Image] = None,
+    logo_pct: int = 25,
+    rotacao: int = 0,
+) -> Image.Image:
+    qr_bytes = _gerar_qrcode_bytes_alto(
+        numero, dado_base, tamanho, 0, fill_color, back_color
+    )
+    img_qr = Image.open(io.BytesIO(qr_bytes)).convert("RGBA")
+
+    if logo is not None:
+        max_dim = int(tamanho * logo_pct / 100)
+        logo_r  = logo.convert("RGBA")
+        ratio   = max_dim / max(logo_r.width, logo_r.height)
+        lw, lh  = int(logo_r.width * ratio), int(logo_r.height * ratio)
+        logo_r  = logo_r.resize((lw, lh), Image.Resampling.LANCZOS)
+
+        # Fundo branco atrás do logo
+        fundo = Image.new("RGBA", (lw + 8, lh + 8), back_color)
+        fundo.paste(logo_r, (4, 4), logo_r)
+        px = (tamanho - fundo.width)  // 2
+        py = (tamanho - fundo.height) // 2
+        img_qr.paste(fundo, (px, py), fundo)
+
+    if rotacao:
+        img_qr = img_qr.rotate(rotacao, expand=True)
+    return img_qr
+
+
+def gerar_imagem_qrcode_com_logo(
+    background: Image.Image,
+    numero: int,
+    dado_base: str,
+    config: dict,
+    logo_config: Optional[dict] = None,
+    watermark_config: Optional[dict] = None,
+) -> Optional[Image.Image]:
+    imagem = background.copy().convert("RGBA")
+    draw   = ImageDraw.Draw(imagem)
+
+    logo = logo_config.get("logo") if logo_config else None
+    logo_pct = logo_config.get("pct", 25) if logo_config else 25
+
+    img_qr = gerar_qrcode_com_logo(
+        numero, dado_base,
+        config["tamanho_qr"],
+        config.get("fill_color", "#000000"),
+        config.get("back_color", "#FFFFFF"),
+        logo, logo_pct,
+        config.get("rotacao_qr", 0),
+    )
+    qw, qh = img_qr.size
+    imagem.paste(img_qr, (config["qr_x"] - qw // 2, config["qr_y"] - qh // 2), img_qr)
+
+    fonte = carregar_fonte(config["caminho_fonte"], config["tamanho_texto"])
+    if fonte is None:
+        return None
+    _colar_texto(draw, imagem, str(numero), fonte,
+                 config["texto_x"], config["texto_y"],
+                 config["cor_texto"], config.get("rotacao_texto", 0))
+
+    # Campos variáveis extras
+    for campo in config.get("campos_extras", []):
+        fonte_c = carregar_fonte(campo.get("caminho_fonte", config["caminho_fonte"]),
+                                  campo.get("tamanho", 60))
+        if fonte_c:
+            texto_c = campo["texto"].replace("{numero}", str(numero))
+            _colar_texto(draw, imagem, texto_c, fonte_c,
+                         campo["x"], campo["y"],
+                         campo.get("cor", "#000000"), campo.get("rotacao", 0))
+
+    resultado = imagem.convert("RGB")
+    if watermark_config:
+        resultado = _aplicar_watermark_interno(resultado, watermark_config)
+    return resultado
+
+
+# ═══════════════════════════════════════════════════════════════
+# 18. SÉRIE, PREFIXO E SUFIXO
+# ═══════════════════════════════════════════════════════════════
+
+def formatar_numero_serie(
+    numero: int,
+    prefixo: str = "",
+    sufixo: str = "",
+    padding: int = 4,
+) -> str:
+    num_str = str(numero).zfill(padding) if padding > 0 else str(numero)
+    return f"{prefixo}{num_str}{sufixo}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 19. QR TOKEN ÚNICO POR COMANDA
+# ═══════════════════════════════════════════════════════════════
+
+import uuid as _uuid
+
+def gerar_url_com_token(numero: int, dado_base: str) -> tuple[str, str]:
+    """
+    Gera URL com token UUID único.
+    Retorna (url, token). Requer mudança server-side para validar o token.
+    """
+    token = _uuid.uuid4().hex[:10]
+    texto = f"{dado_base}{numero}"
+    b64   = base64.b64encode(texto.encode()).decode()
+    url   = f"https://pediucomeu.com.br/autoatendimento/{b64}?t={token}"
+    return url, token
+
+
+def salvar_tokens(tokens_map: dict[int, str], nome_arquivo: str) -> None:
+    """Salva mapa {numero: token} em JSON para rastreabilidade."""
+    with open(nome_arquivo, "w", encoding="utf-8") as f:
+        json.dump({"tokens": tokens_map,
+                   "gerado_em": datetime.now().isoformat()}, f, indent=2)
+
+
+def gerar_qrcode_token(
+    numero: int,
+    dado_base: str,
+    tamanho: int,
+    fill_color: str = "#000000",
+    back_color: str = "#FFFFFF",
+    rotacao: int = 0,
+) -> tuple[Image.Image, str]:
+    """Gera QR com token único. Retorna (imagem_qr, token)."""
+    token = _uuid.uuid4().hex[:10]
+    texto = f"{dado_base}{numero}"
+    b64   = base64.b64encode(texto.encode()).decode()
+    url   = f"https://pediucomeu.com.br/autoatendimento/{b64}?t={token}"
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        box_size=10, border=2,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color=fill_color, back_color=back_color).convert("RGBA")
+    img = img.resize((tamanho, tamanho), Image.Resampling.NEAREST)
+    if rotacao:
+        img = img.rotate(rotacao, expand=True)
+    return img, token
+
+
+# ═══════════════════════════════════════════════════════════════
+# 20. MARCAS DE CORTE / SANGRIA (BLEED)
+# ═══════════════════════════════════════════════════════════════
+
+def adicionar_marcas_corte(
+    img: Image.Image,
+    bleed_px: int = 30,
+    mark_len: int = 15,
+    mark_color: str = "#000000",
+) -> Image.Image:
+    """
+    Adiciona área de sangria e marcas de corte profissionais.
+    bleed_px: pixels de sangria em cada lado.
+    """
+    ow, oh = img.size
+    nw, nh = ow + bleed_px * 2, oh + bleed_px * 2
+    canvas = Image.new("RGB", (nw, nh), "white")
+    canvas.paste(img, (bleed_px, bleed_px))
+    draw = ImageDraw.Draw(canvas)
+
+    offset = 3  # gap entre borda da imagem e a marca
+    ml = mark_len
+
+    corners = [
+        (bleed_px, bleed_px),          # top-left
+        (bleed_px + ow, bleed_px),     # top-right
+        (bleed_px, bleed_px + oh),     # bottom-left
+        (bleed_px + ow, bleed_px + oh) # bottom-right
+    ]
+    for cx, cy in corners:
+        # horizontal mark
+        dir_x = -1 if cx > nw // 2 else 1
+        draw.line([(cx + dir_x * offset, cy),
+                   (cx + dir_x * (offset + ml), cy)],
+                  fill=mark_color, width=1)
+        # vertical mark
+        dir_y = -1 if cy > nh // 2 else 1
+        draw.line([(cx, cy + dir_y * offset),
+                   (cx, cy + dir_y * (offset + ml))],
+                  fill=mark_color, width=1)
+
+    # Linha tracejada de corte
+    dash = 5
+    for x in range(0, nw, dash * 2):
+        if x + dash < nw:
+            draw.line([(x, bleed_px), (x + dash, bleed_px)],
+                      fill="#aaaaaa", width=1)
+            draw.line([(x, bleed_px + oh), (x + dash, bleed_px + oh)],
+                      fill="#aaaaaa", width=1)
+    for y in range(0, nh, dash * 2):
+        if y + dash < nh:
+            draw.line([(bleed_px, y), (bleed_px, y + dash)],
+                      fill="#aaaaaa", width=1)
+            draw.line([(bleed_px + ow, y), (bleed_px + ow, y + dash)],
+                      fill="#aaaaaa", width=1)
+    return canvas
+
+
+# ═══════════════════════════════════════════════════════════════
+# 21. FOLHA DE CALIBRAÇÃO DE IMPRESSORA
+# ═══════════════════════════════════════════════════════════════
+
+def gerar_folha_calibracao(
+    dado_base: str,
+    config: dict,
+    numero_exemplo: int = 1,
+    tamanhos_pct: list[int] = None,
+) -> Image.Image:
+    """
+    Gera uma folha A4 com QRs em múltiplos tamanhos e régua de calibração.
+    """
+    if tamanhos_pct is None:
+        tamanhos_pct = [50, 75, 100, 125, 150]
+
+    page_w, page_h = 1240, 1754  # A4 a 150 DPI
+    page = Image.new("RGB", (page_w, page_h), "white")
+    draw = ImageDraw.Draw(page)
+
+    ruler_font = ImageFont.load_default()
+    for candidato in ["DejaVuSans.ttf", "LiberationSans-Regular.ttf", "arial.ttf"]:
+        try:
+            ruler_font = ImageFont.truetype(candidato, 18)
+            break
+        except IOError:
+            continue
+
+    tamanho_base = config.get("tamanho_qr", 300)
+    cell_w = page_w // len(tamanhos_pct)
+    y_start = 80
+
+    draw.text((20, 20), "FOLHA DE CALIBRAÇÃO — Gerador de Comandas",
+              fill="#333333", font=ruler_font)
+    draw.text((20, 45), f"Imprima e verifique qual tamanho lê corretamente com seu scanner.",
+              fill="#666666", font=ruler_font)
+
+    for i, pct in enumerate(tamanhos_pct):
+        tamanho = int(tamanho_base * pct / 100)
+        tamanho = max(50, tamanho)
+        img_qr = gerar_qrcode_imagem(
+            numero_exemplo, dado_base, tamanho, 0,
+            config.get("fill_color", "#000000"),
+            config.get("back_color", "#FFFFFF"),
+        )
+        cx = i * cell_w + (cell_w - tamanho) // 2
+        page.paste(img_qr.convert("RGB"), (cx, y_start))
+        label = f"{pct}% ({tamanho}px)"
+        bb = draw.textbbox((0, 0), label, font=ruler_font)
+        lw = bb[2] - bb[0]
+        draw.text((i * cell_w + (cell_w - lw) // 2, y_start + tamanho + 6),
+                  label, fill="#333333", font=ruler_font)
+
+    # Régua horizontal de 15cm
+    ruler_y = y_start + int(tamanho_base * 1.5) + 60
+    px_per_mm = 150 / 25.4  # 150 DPI → pixels por mm
+    for mm in range(0, 151):
+        x = int(20 + mm * px_per_mm)
+        if x >= page_w - 20:
+            break
+        h = 20 if mm % 10 == 0 else (12 if mm % 5 == 0 else 7)
+        draw.line([(x, ruler_y), (x, ruler_y + h)], fill="#333333", width=1)
+        if mm % 10 == 0:
+            txt = f"{mm}mm"
+            draw.text((x + 2, ruler_y + 22), txt, fill="#333333", font=ruler_font)
+    draw.line([(20, ruler_y), (int(20 + 150 * px_per_mm), ruler_y)],
+              fill="#333333", width=2)
+    draw.text((20, ruler_y - 25), "Régua de calibração (150mm):",
+              fill="#555555", font=ruler_font)
+
+    return page
+
+
+# ═══════════════════════════════════════════════════════════════
+# 22. ETIQUETAS AVERY
+# ═══════════════════════════════════════════════════════════════
+
+# Medidas a 150 DPI. Todos os valores em pixels.
+# Fonte: dimensões oficiais Avery convertidas de polegadas × 150.
+TEMPLATES_AVERY: dict[str, dict] = {
+    "Avery 5160 — 3×10 (2,625\"×1\")": {
+        "cols": 3, "rows": 10,
+        "page_w": 1275, "page_h": 1650,
+        "cell_w": 394, "cell_h": 150,
+        "margin_left": 46, "margin_top": 75,
+        "gap_h": 0, "gap_v": 0,
+    },
+    "Avery 5163 — 2×5 (4\"×2\")": {
+        "cols": 2, "rows": 5,
+        "page_w": 1275, "page_h": 1650,
+        "cell_w": 600, "cell_h": 300,
+        "margin_left": 38, "margin_top": 75,
+        "gap_h": 0, "gap_v": 0,
+    },
+    "Avery 5167 — 4×20 (1,75\"×0,5\")": {
+        "cols": 4, "rows": 20,
+        "page_w": 1275, "page_h": 1650,
+        "cell_w": 263, "cell_h": 75,
+        "margin_left": 75, "margin_top": 75,
+        "gap_h": 0, "gap_v": 0,
+    },
+    "Avery L7160 — 3×7 (63,5mm×38,1mm) A4": {
+        "cols": 3, "rows": 7,
+        "page_w": 1240, "page_h": 1754,
+        "cell_w": 374, "cell_h": 224,
+        "margin_left": 47, "margin_top": 149,
+        "gap_h": 0, "gap_v": 0,
+    },
+}
+
+
+def gerar_avery(
+    imagens: list[Image.Image],
+    template_key: str,
+) -> list[Image.Image]:
+    t = TEMPLATES_AVERY.get(template_key)
+    if t is None:
+        return []
+
+    por_folha = t["cols"] * t["rows"]
+    folhas    = []
+
+    for i in range(0, max(len(imagens), 1), por_folha):
+        folha = Image.new("RGB", (t["page_w"], t["page_h"]), "white")
+        lote  = imagens[i:i + por_folha]
+        for j, img in enumerate(lote):
+            col = j % t["cols"]
+            row = j // t["cols"]
+            x   = t["margin_left"] + col * (t["cell_w"] + t["gap_h"])
+            y   = t["margin_top"]  + row * (t["cell_h"] + t["gap_v"])
+            sc  = min(t["cell_w"] / img.width, t["cell_h"] / img.height)
+            nw, nh = int(img.width * sc), int(img.height * sc)
+            img_s = img.resize((nw, nh), Image.Resampling.LANCZOS)
+            px = x + (t["cell_w"] - nw) // 2
+            py = y + (t["cell_h"] - nh) // 2
+            folha.paste(img_s, (px, py))
+        folhas.append(folha)
+    return folhas
+
+
+# ═══════════════════════════════════════════════════════════════
+# 23. EXPORTAÇÃO FRENTE E VERSO (DUPLEX)
+# ═══════════════════════════════════════════════════════════════
+
+def exportar_pdf_duplex(
+    frentes: list[Image.Image],
+    versos: list[Image.Image],
+    dpi: int = 150,
+) -> bytes:
+    """Intercala frente/verso: [f1, v1, f2, v2, ...] para impressão duplex."""
+    combinado: list[Image.Image] = []
+    for f, v in zip(frentes, versos):
+        combinado.append(f)
+        combinado.append(v)
+    # Páginas sobrando (sem verso)
+    for f in frentes[len(versos):]:
+        combinado.append(f)
+        combinado.append(Image.new("RGB", f.size, "white"))
+    return exportar_pdf(combinado, dpi)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 24. CACHE PERSISTENTE DE TEMPLATES
+# ═══════════════════════════════════════════════════════════════
+
+_CACHE_DIR = ".cache_templates"
+
+
+def _cache_key(file_bytes: bytes) -> str:
+    return hashlib.sha256(file_bytes).hexdigest()[:24]
+
+
+def salvar_cache_template(file_bytes: bytes, img: Image.Image) -> None:
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    key = _cache_key(file_bytes)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    with open(os.path.join(_CACHE_DIR, f"{key}.png"), "wb") as f:
+        f.write(buf.getvalue())
+
+
+def carregar_cache_template(
+    file_bytes: bytes,
+) -> Optional[Image.Image]:
+    key  = _cache_key(file_bytes)
+    path = os.path.join(_CACHE_DIR, f"{key}.png")
+    if os.path.isfile(path):
+        return Image.open(path)
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# 25. METADADOS DE LOTE (GERAÇÃO INCREMENTAL)
+# ═══════════════════════════════════════════════════════════════
+
+_LOTES_DIR = "lotes"
+
+
+def salvar_metadados_lote(lote_id: str, meta: dict) -> None:
+    os.makedirs(_LOTES_DIR, exist_ok=True)
+    path = os.path.join(_LOTES_DIR, f"{lote_id}.json")
+    meta["atualizado_em"] = datetime.now().isoformat()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def carregar_metadados_lote(lote_id: str) -> dict:
+    path = os.path.join(_LOTES_DIR, f"{lote_id}.json")
+    if not os.path.isfile(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def listar_lotes_salvos() -> list[dict]:
+    if not os.path.isdir(_LOTES_DIR):
+        return []
+    lotes = []
+    for nome in sorted(os.listdir(_LOTES_DIR), reverse=True):
+        if nome.endswith(".json"):
+            try:
+                with open(os.path.join(_LOTES_DIR, nome)) as f:
+                    d = json.load(f)
+                    d["_arquivo"] = nome[:-5]
+                    lotes.append(d)
+            except Exception:
+                pass
+    return lotes
+
+
+# ═══════════════════════════════════════════════════════════════
+# 26. WEBHOOK DE NOTIFICAÇÃO
+# ═══════════════════════════════════════════════════════════════
+
+import threading as _threading
+
+def disparar_webhook(url: str, payload: dict) -> None:
+    """Dispara POST em background thread com retry automático."""
+    def _post() -> None:
+        try:
+            import urllib.request
+            import urllib.error
+            data = json.dumps(payload).encode()
+            req  = urllib.request.Request(
+                url, data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            for tentativa in range(3):
+                try:
+                    with urllib.request.urlopen(req, timeout=10):
+                        break
+                except urllib.error.URLError:
+                    if tentativa == 2:
+                        pass
+        except Exception:
+            pass
+    _threading.Thread(target=_post, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════
+# 27. GOOGLE SHEETS (requer gspread + service account)
+# ═══════════════════════════════════════════════════════════════
+
+def ler_google_sheets(
+    sheet_url_ou_id: str,
+    creds_json_path: str,
+) -> tuple[list[dict], str]:
+    """
+    Lê uma planilha Google Sheets e retorna lista de dicts.
+    Retorna (linhas, mensagem_de_erro).
+    A planilha deve ser compartilhada com o e-mail da service account.
+    """
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        return [], "gspread não instalado. Execute: pip install gspread google-auth"
+
+    try:
+        scopes  = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+        creds   = Credentials.from_service_account_file(creds_json_path, scopes=scopes)
+        cliente = gspread.authorize(creds)
+        if "spreadsheets/d/" in sheet_url_ou_id:
+            sheet = cliente.open_by_url(sheet_url_ou_id)
+        else:
+            sheet = cliente.open_by_key(sheet_url_ou_id)
+        ws    = sheet.sheet1
+        rows  = ws.get_all_records()
+        return rows, ""
+    except Exception as e:
+        return [], f"Erro ao acessar Google Sheets: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 28. UPLOAD GOOGLE DRIVE / S3
+# ═══════════════════════════════════════════════════════════════
+
+def upload_google_drive(
+    pdf_bytes: bytes,
+    folder_id: str,
+    nome_arquivo: str,
+    creds_json_path: str,
+) -> tuple[str, str]:
+    """Retorna (link_compartilhamento, mensagem_de_erro)."""
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaInMemoryUpload
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        return "", "google-api-python-client não instalado."
+
+    try:
+        creds   = Credentials.from_service_account_file(
+            creds_json_path,
+            scopes=["https://www.googleapis.com/auth/drive.file"]
+        )
+        service = build("drive", "v3", credentials=creds)
+        meta    = {"name": nome_arquivo, "parents": [folder_id]}
+        media   = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf")
+        arq     = service.files().create(
+            body=meta, media_body=media, fields="id"
+        ).execute()
+        fid     = arq.get("id", "")
+        service.permissions().create(
+            fileId=fid,
+            body={"type": "anyone", "role": "reader"}
+        ).execute()
+        link = f"https://drive.google.com/file/d/{fid}/view"
+        return link, ""
+    except Exception as e:
+        return "", f"Erro no upload: {e}"
+
+
+def upload_s3(
+    pdf_bytes: bytes,
+    bucket: str,
+    key: str,
+    aws_access_key: str,
+    aws_secret_key: str,
+    region: str = "us-east-1",
+) -> tuple[str, str]:
+    """Retorna (url_publica, mensagem_de_erro)."""
+    try:
+        import boto3
+    except ImportError:
+        return "", "boto3 não instalado. Execute: pip install boto3"
+    try:
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=region,
+        )
+        s3.put_object(
+            Bucket=bucket, Key=key, Body=pdf_bytes,
+            ContentType="application/pdf", ACL="public-read",
+        )
+        url = f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+        return url, ""
+    except Exception as e:
+        return "", f"Erro no upload S3: {e}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 29. AGENDAMENTO (APScheduler)
+# ═══════════════════════════════════════════════════════════════
+
+_scheduler = None
+ARQUIVO_AGENDAMENTOS = "agendamentos.json"
+
+
+def iniciar_scheduler():
+    global _scheduler
+    if _scheduler is None:
+        try:
+            from apscheduler.schedulers.background import BackgroundScheduler
+            _scheduler = BackgroundScheduler()
+            _scheduler.start()
+        except ImportError:
+            pass
+    return _scheduler
+
+
+def salvar_agendamento(nome: str, config: dict) -> None:
+    ags = carregar_agendamentos()
+    ags[nome] = {**config, "criado_em": datetime.now().isoformat()}
+    with open(ARQUIVO_AGENDAMENTOS, "w", encoding="utf-8") as f:
+        json.dump(ags, f, ensure_ascii=False, indent=2)
+
+
+def carregar_agendamentos() -> dict:
+    if not os.path.isfile(ARQUIVO_AGENDAMENTOS):
+        return {}
+    try:
+        with open(ARQUIVO_AGENDAMENTOS) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def deletar_agendamento(nome: str) -> None:
+    ags = carregar_agendamentos()
+    ags.pop(nome, None)
+    with open(ARQUIVO_AGENDAMENTOS, "w", encoding="utf-8") as f:
+        json.dump(ags, f, ensure_ascii=False, indent=2)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 30. INTERNACIONALIZAÇÃO (i18n)
+# ═══════════════════════════════════════════════════════════════
+
+_traducoes_cache: dict[str, dict] = {}
+
+
+def carregar_traducoes(pasta: str = "i18n") -> dict[str, dict]:
+    global _traducoes_cache
+    if _traducoes_cache:
+        return _traducoes_cache
+    if not os.path.isdir(pasta):
+        return {}
+    for nome in os.listdir(pasta):
+        if nome.endswith(".json"):
+            lang = nome[:-5]
+            try:
+                with open(os.path.join(pasta, nome), encoding="utf-8") as f:
+                    _traducoes_cache[lang] = json.load(f)
+            except Exception:
+                pass
+    return _traducoes_cache
+
+
+def t(chave: str, lang: str = "pt", traducoes: Optional[dict] = None) -> str:
+    if traducoes is None:
+        traducoes = carregar_traducoes()
+    return traducoes.get(lang, {}).get(chave, chave)

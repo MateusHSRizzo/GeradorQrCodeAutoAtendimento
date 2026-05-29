@@ -1,22 +1,43 @@
-# Streamlit + UI
+# ── Core ───────────────────────────────────────────────────────
 streamlit>=1.35.0
-
-# Imagem
 Pillow>=10.0.0
-
-# QR Code
 qrcode[pil]>=7.4.2
-
-# Código de Barras
 python-barcode>=0.15.1
 
-# Validação de QR (opcional — requer libzbar-dev no Linux)
-# Ubuntu/Debian: sudo apt-get install libzbar0
-pyzbar>=0.1.9
-
-# API REST (opcional)
+# ── API REST ───────────────────────────────────────────────────
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 
-# E-mail
+# ── CLI ────────────────────────────────────────────────────────
+click>=8.1.7
+
+# ── Validação de QR (requer libzbar0 no Linux) ─────────────────
+# Ubuntu/Debian: sudo apt-get install libzbar0
+pyzbar>=0.1.9
+
+# ── E-mail e variáveis de ambiente ─────────────────────────────
 python-dotenv>=1.0.0
+
+# ── Autenticação multi-usuário ─────────────────────────────────
+streamlit-authenticator>=0.3.2
+
+# ── Agendamento de tarefas ─────────────────────────────────────
+APScheduler>=3.10.4
+
+# ── Integrações Google (opcional) ──────────────────────────────
+# pip install gspread google-auth google-api-python-client
+# gspread>=6.0.0
+# google-auth>=2.29.0
+# google-api-python-client>=2.130.0
+
+# ── Amazon S3 (opcional) ───────────────────────────────────────
+# pip install boto3
+# boto3>=1.34.0
+
+# ── Assinatura digital de PDF (opcional) ───────────────────────
+# pip install pyhanko pyhanko-certvalidator
+# pyhanko>=0.21.0
+
+# ── Coordenadas interativas no preview (opcional) ──────────────
+# pip install streamlit-image-coordinates
+# streamlit-image-coordinates>=0.4.0
